@@ -2,8 +2,11 @@ import os
 import random
 import numpy as np
 import errno
+import argparse
 from PIL import Image
 from tqdm import tqdm
+import imageio
+
 
 def compose_images(foreground_paths, background_path):
     rnd_line_num = len(foreground_paths)
@@ -15,6 +18,11 @@ def compose_images(foreground_paths, background_path):
     background = Image.open(background_path)
     background = background.convert('RGBA')
     bw, bh = background.size
+
+    b_img = imageio.imread(background_path, as_gray=True)
+    is_black_bg = False
+    if np.mean(b_img) < 127 :
+        is_black_bg = True
 
     # Rotate the foreground
     # angle_degrees = random.randint(0, 359)
@@ -33,10 +41,10 @@ def compose_images(foreground_paths, background_path):
         foreground_path = foreground_paths[line_i]
         # Make sure the foreground path is valid and open the image
         assert os.path.exists(foreground_path), 'image path does not exist: {}'.format(foreground_path)
-        assert os.path.splitext(foreground_path)[1].lower() == '.png', 'foreground must be a .png file'
+        assert os.path.splitext(foreground_path)[1].lower() == '.png', 'foreground must be a .png file : {}'.format(foreground_path)
         foreground = Image.open(foreground_path)
         fw, fh = foreground.size
-        ratio = min(bw/fw, (bh/rnd_line_num)/fh/2.0, 1.0)
+        ratio = min(bw/fw, (bh/rnd_line_num)/fh, 1.0)
         #print('ratio : ', ratio)
         foreground = foreground.resize((int(fw*ratio), int(fh*ratio)), Image.BICUBIC)
         fw, fh = foreground.size
@@ -47,9 +55,12 @@ def compose_images(foreground_paths, background_path):
         newData = []
         for item in datas:
             if item[0] == 255 and item[1] == 255 and item[2] == 255:
-                newData.append((255, 255, 255, 0))
+                newData.append((255,255,255,0))
             else:
-                newData.append(item)
+                if is_black_bg :
+                    newData.append((255,255,255,255))
+                else :
+                    newData.append(item)
         foreground.putdata(newData)
         foreground_alpha = np.array(foreground.getchannel(3))
         assert np.any(foreground_alpha == 0), 'foreground needs to have some transparency: {}'.format(foreground_path)
@@ -67,14 +78,7 @@ def compose_images(foreground_paths, background_path):
         alpha_mask = foreground.getchannel(3)
         new_alpha_mask.paste(alpha_mask, paste_position)
 
-        # Grab the alpha pixels above a specified threshold
-        #alpha_threshold = 200
-        #mask_arr = np.array(np.greater(np.array(new_alpha_mask), alpha_threshold), dtype=np.uint8)
-        #hard_mask = Image.fromarray(np.uint8(mask_arr) * 255, 'L')
 
-        # Get the smallest & largest non-zero values in each dimension and calculate the bounding box
-        #nz = np.nonzero(hard_mask)
-        #bboxes.append([np.min(nz[0]), np.min(nz[1]), np.max(nz[0]), np.max(nz[1])])
         px = paste_position[0]
         py = paste_position[1]
         bboxes.append([px,py, px+fw,py, px+fw,py+fh, px,py+fh])
@@ -83,6 +87,26 @@ def compose_images(foreground_paths, background_path):
     return composite, bboxes
 
 if __name__ == '__main__' :
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-f", "--from", type=int, default=1,
+                    help="min number of line")
+    ap.add_argument("-t", "--to", type=int, default=10,
+                    help="max number of line")
+    ap.add_argument("-p", "--output", type=str, default='generated',
+                    help="output_path_name")
+
+    ap.add_argument("-s", "--start", type=int, default=0,
+                    help="start index of genererated images")
+    ap.add_argument("-e", "--end", type=int, default=1000,
+                    help="end index of genererated images")
+
+    args = vars(ap.parse_args())
+    line_min = args["from"]
+    line_max = args["to"]
+    start_num = args["start"]
+    end_num = args["end"]
+    output = args["output"]
+
     # Get lists of foreground and background image paths
     dataset_dir = os.path.dirname(__file__)
     backgrounds_dir = os.path.join(dataset_dir, 'backgrounds')
@@ -91,8 +115,8 @@ if __name__ == '__main__' :
     foregrounds = [os.path.join(foregrounds_dir, file_name) for file_name in os.listdir(foregrounds_dir)]
 
     # Create an output directory
-    output_image_dir = os.path.join(dataset_dir, 'generated_image')
-    output_text_dir = os.path.join(dataset_dir, 'generated_text')
+    output_image_dir = os.path.join(dataset_dir, output + '_image')
+    output_text_dir = os.path.join(dataset_dir, output+'_text')
 
     try:
         os.mkdir(output_image_dir)
@@ -107,8 +131,8 @@ if __name__ == '__main__' :
     txt_lines = []
 
     # Generate 5 new images
-    for i in tqdm(range(100)):
-        rnd_line_num = random.randint(1, 5)
+    for i in tqdm(range(start_num, end_num)):
+        rnd_line_num = random.randint(line_min, line_max)
         foreground_paths = [random.choice(foregrounds) for fore_i in range(rnd_line_num)]
         #print('leng   : ' , len(foreground_paths))
         background_path = random.choice(backgrounds)
